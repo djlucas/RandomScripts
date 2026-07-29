@@ -1,0 +1,71 @@
+function Show-SIValue {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline)]
+        $IN
+    )
+    if ($IN -lt 1024) { $OUT = $IN; $UNIT = "B" }
+    if ($IN -gt 1024 -AND $IN -lt 1mb) { $OUT = [Math]::Round($IN / 1kb, 2); $UNIT = "KB" }
+    if ($IN -gt 1mb -AND $IN -lt 1gb) { $OUT = [Math]::Round($IN / 1mb, 2); $UNIT = "MB" }
+    if ($IN -gt 1gb -AND $IN -lt 1tb) { $OUT = [Math]::Round($IN / 1gb, 2); $UNIT = "GB" }
+    if ($IN -gt 1tb -AND $IN -lt 1pb) { $OUT = [Math]::Round($IN / 1tb, 2); $UNIT = "TB" }
+    if ($IN -gt 1pb -AND $IN -lt 1152921504606846976) { $OUT = [Math]::Round($IN / 1pb, 2); $UNIT = "PB" }
+    if ($IN -gt 1152921504606846976 -AND $IN -lt 1180591620717411303424) { $OUT = [Math]::Round($IN / 1024 / 1pb, 2); $UNIT = "EB" }
+    if ($IN -gt 1180591620717411303424 -AND $IN -lt 1208925819614629174706176) {$OUT = [Math]::Round($IN / 1048576 / 1pb, 2); $UNIT = "ZB" }
+    $RET = [string]$OUT + $UNIT
+    return $RET
+}
+
+
+function Show-SIValue {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline)]
+        $IN,
+        [int]$PREC = 2
+    )
+    if ($IN -lt 1024) { $OUT = $IN; $UNIT = "B" }
+    if ($IN -gt 1024 -AND $IN -lt 1mb) { $OUT = [Math]::Round($IN / 1kb, $PREC); $UNIT = "KB" }
+    if ($IN -gt 1mb -AND $IN -lt 1gb) { $OUT = [Math]::Round($IN / 1mb, $PREC); $UNIT = "MB" }
+    if ($IN -gt 1gb -AND $IN -lt 1tb) { $OUT = [Math]::Round($IN / 1gb, $PREC); $UNIT = "GB" }
+    if ($IN -gt 1tb -AND $IN -lt 1pb) { $OUT = [Math]::Round($IN / 1tb, $PREC); $UNIT = "TB" }
+    if ($IN -gt 1pb -AND $IN -lt 1152921504606846976) { $OUT = [Math]::Round($IN / 1pb, $PREC); $UNIT = "PB" }
+    if ($IN -gt 1152921504606846976 -AND $IN -lt 1180591620717411303424) { $OUT = [Math]::Round($IN / 1024 / 1pb, $PREC); $UNIT = "EB" }
+    if ($IN -gt 1180591620717411303424 -AND $IN -lt 1208925819614629174706176) {$OUT = [Math]::Round($IN / 1048576 / 1pb, $PREC); $UNIT = "ZB" }
+    $RET = [string]$OUT + $UNIT
+    return $RET
+}
+
+function Convert-Size {
+    [cmdletbinding()]
+    param(
+        [validateset("Bytes","KB","MB","GB","TB","PB","EB","ZB")]
+        [string]$From,
+        [validateset("Bytes","KB","MB","GB","TB","PB","EB","ZB")]
+        [string]$To,
+        [Parameter(Mandatory=$true)]
+        [double]$Value,
+        [int]$Precision = 4
+    )
+    switch($From) {
+        "Bytes" {$value = $Value }
+        "KB" {$value = $Value * 1024 }
+        "MB" {$value = $Value * 1024 * 1024}
+        "GB" {$value = $Value * 1024 * 1024 * 1024}
+        "TB" {$value = $Value * 1024 * 1024 * 1024 * 1024}
+        "PB" {$value = $Value * 1024 * 1024 * 1024 * 1024 * 1024}
+        "EB" {$value = $Value * 1024 * 1024 * 1024 * 1024 * 1024 * 1024}
+        "ZB" {$value = $Value * 1024 * 1024 * 1024 * 1024 * 1024 * 1024 * 1024}
+    }
+    switch ($To) {
+        "Bytes" {return $value}
+        "KB" {$Value = $Value/1KB}
+        "MB" {$Value = $Value/1MB}
+        "GB" {$Value = $Value/1GB}
+        "TB" {$Value = $Value/1TB}
+        "PB" {$Value = $Value/1PB}
+        "EB" {$Value = $Value/1024/1PB}
+        "ZB" {$Value = $Value/1024/1024/1PB}
+    }
+    return [Math]::Round($value,$Precision,[MidPointRounding]::AwayFromZero)
+}
