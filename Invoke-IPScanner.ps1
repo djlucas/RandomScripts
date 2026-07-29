@@ -2,7 +2,7 @@
 # AUTHOR: Lucas IT Services (LITS)
 # FILE: Invoke-IPScanner.ps1
 # DESCRIPTION: Multithreaded IP Scanner with GUI or CLI interface
-# Revision 4.0
+# Revision 4.5
 # ==============================================================================
 
 <#
@@ -31,7 +31,7 @@
     Switch. Skips ICMP (Ping) and relies solely on TCP port connection.
 
 .PARAMETER Ports
-    An array of specific TCP ports to scan. Default is top 14 common infrastructure ports.
+    An array of specific TCP ports to scan. Default is top common infrastructure ports.
 
 .PARAMETER Threads
     Integer. Number of concurrent threads (Default: 64).
@@ -193,7 +193,8 @@ function Invoke-CoreScannerEngine {
     # Baseline core map for high-speed mapping fallbacks
     $MasterPortMap = @{
         20="FTP-Data"; 21="FTP"; 22="SSH"; 25="SMTP"; 53="DNS"; 80="HTTP"; 135="RPC"; 
-        161="SNMP"; 443="HTTPS"; 445="SMB"; 1433="MSSQL"; 3306="MySQL"; 3389="RDP"
+        161="SNMP"; 443="HTTPS"; 445="SMB"; 1433="MSSQL"; 3306="MySQL"; 3389="RDP";
+        4433="HTTPS-Alt"; 8000="HTTP-Alt"; 8080="HTTP-Proxy"; 8443="HTTPS-Alt"; 9443="HTTPS-Alt"
     }
 
     # Parse IANA CSV into Master Map dictionary if available
@@ -214,7 +215,7 @@ function Invoke-CoreScannerEngine {
     }
     
     # Standard baseline target ports used when no custom overrides are defined via CLI or GUI
-    $DefaultInfraPorts = @(20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389)
+    $DefaultInfraPorts = @(20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389, 4433, 8000, 8080, 8443, 9443)
     $PortsToScan = if ($Ports) { $Ports | Sort-Object -Unique } else { $DefaultInfraPorts | Sort-Object }
 
     # --- Worker Thread Script Block ---
@@ -425,7 +426,7 @@ if ($RunGUI) {
     $txtPortsInput = New-Object System.Windows.Forms.TextBox
     $txtPortsInput.Location = New-Object System.Drawing.Point(15, 91)
     $txtPortsInput.Size = New-Object System.Drawing.Size(215, 20)
-    $txtPortsInput.Text = if ($Ports) { $Ports -join ", " } else { "21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389" }
+    $txtPortsInput.Text = if ($Ports) { $Ports -join ", " } else { "20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389, 4433, 8000, 8080, 8443, 9443" }
     $grpOptions.Controls.Add($txtPortsInput)
 
     $btnScan = New-Object System.Windows.Forms.Button
@@ -455,6 +456,106 @@ if ($RunGUI) {
     [void]$lvResults.Columns.Add("NIC Vendor", 160)
     [void]$lvResults.Columns.Add("Active Ports", 110)
     $form.Controls.Add($lvResults)
+
+    # --- Right-Click Context Menu Implementation ---
+    $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+    $menuCopyIP = $contextMenu.Items.Add("Copy IP Address")
+    $menuCopyIP.Add_Click({
+        if ($lvResults.SelectedItems.Count -gt 0) {
+            $ip = $lvResults.SelectedItems[0].Text
+            if (-not [string]::IsNullOrWhiteSpace($ip)) {
+                [System.Windows.Forms.Clipboard]::SetText($ip)
+                $lblStatus.Text = "Copied IP ($ip) to clipboard."
+                $lblStatus.ForeColor = [System.Drawing.Color]::Green
+            }
+        }
+    })
+
+    $menuCopyMAC = $contextMenu.Items.Add("Copy MAC Address")
+    $menuCopyMAC.Add_Click({
+        if ($lvResults.SelectedItems.Count -gt 0) {
+            $mac = $lvResults.SelectedItems[0].SubItems[2].Text
+            if (-not [string]::IsNullOrWhiteSpace($mac)) {
+                [System.Windows.Forms.Clipboard]::SetText($mac)
+                $lblStatus.Text = "Copied MAC ($mac) to clipboard."
+                $lblStatus.ForeColor = [System.Drawing.Color]::Green
+            }
+        }
+    })
+
+    $menuCopyPorts = $contextMenu.Items.Add("Copy Active Ports")
+    $menuCopyPorts.Add_Click({
+        if ($lvResults.SelectedItems.Count -gt 0) {
+            $ports = $lvResults.SelectedItems[0].SubItems[4].Text
+            if (-not [string]::IsNullOrWhiteSpace($ports)) {
+                [System.Windows.Forms.Clipboard]::SetText($ports)
+                $lblStatus.Text = "Copied ports ($ports) to clipboard."
+                $lblStatus.ForeColor = [System.Drawing.Color]::Green
+            }
+        }
+    })
+
+    [void]$contextMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+    $menuOpenHTTP = $contextMenu.Items.Add("Open HTTP (Browser)")
+    $menuOpenHTTP.Add_Click({
+        if ($lvResults.SelectedItems.Count -gt 0) {
+            $ip = $lvResults.SelectedItems[0].Text
+            if (-not [string]::IsNullOrWhiteSpace($ip)) { Start-Process "http://$ip" }
+        }
+    })
+
+    $menuOpenHTTPS = $contextMenu.Items.Add("Open HTTPS (Browser)")
+    $menuOpenHTTPS.Add_Click({
+        if ($lvResults.SelectedItems.Count -gt 0) {
+            $ip = $lvResults.SelectedItems[0].Text
+            if (-not [string]::IsNullOrWhiteSpace($ip)) { Start-Process "https://$ip" }
+        }
+    })
+
+    $lvResults.ContextMenuStrip = $contextMenu
+
+    # --- Column Header Sorting Implementation ---
+    $script:sortColumn = -1
+    $script:sortAscending = $true
+
+    $lvResults.Add_ColumnClick({
+        param($sender, $e)
+        if ($lvResults.Items.Count -le 1) { return }
+
+        if ($script:sortColumn -eq $e.Column) {
+            $script:sortAscending = -not $script:sortAscending
+        } else {
+            $script:sortColumn = $e.Column
+            $script:sortAscending = $true
+        }
+
+        $lvResults.BeginUpdate()
+        
+        # Cast to array explicitly to prevent unrolling issues
+        $rawItems = @($lvResults.Items)
+        $lvResults.Items.Clear()
+
+        $sortedItems = @($rawItems | Sort-Object -Property @{
+            Expression = {
+                $val = $_.SubItems[$e.Column].Text
+                if ($e.Column -eq 0) {
+                    try { [version]$val } catch { $val }
+                } else {
+                    $val
+                }
+            }
+            Descending = (-not $script:sortAscending)
+        })
+
+        if ($sortedItems.Count -gt 0) {
+            $typedItems = [System.Windows.Forms.ListViewItem[]]$sortedItems
+            $lvResults.Items.AddRange($typedItems)
+        }
+
+        $lvResults.EndUpdate()
+    })
 
     $btnScan.Add_Click({
         $lvResults.Items.Clear()
