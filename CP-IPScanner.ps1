@@ -2,7 +2,7 @@
 # AUTHOR: Lucas IT Services (LITS)
 # FILE: CP-IPScanner.ps1
 # DESCRIPTION: Multithreaded IP Scanner with GUI or CLI interface
-# Revision 1.4
+# Revision 1.7
 # ==============================================================================
 
 <#
@@ -12,6 +12,50 @@
 .DESCRIPTION
     Scans ranges of IP addresses and/or CIDR subnets to identify active devices.
     Features an interactive web-based GUI with a strict reverse-watchdog fail-safe.
+
+.PARAMETER Range
+    Specifies one or more IP address ranges to scan.
+    Supported formats:
+    - Octet range: "192.168.1.1-50"
+    - Full IP range: "10.0.0.1-10.0.0.254"
+
+.PARAMETER Subnet
+    Specifies one or more subnets in CIDR notation to scan (e.g., "192.168.1.0/24").
+
+.PARAMETER TcpConnect
+    If specified, skips initial ICMP ping checks and directly attempts TCP connect scans 
+    on specified ports. Useful for networks blocking ICMP traffic.
+
+.PARAMETER UpdateDatabases
+    Forces an update of the locally cached IEEE OUI and IANA port mapping databases 
+    from their upstream remote sources.
+
+.PARAMETER Ports
+    An array of target TCP ports to check on each discovered host.
+    If omitted, defaults to standard infrastructure ports (20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389, 4433, 8000, 8080, 8443, 9443).
+
+.PARAMETER Threads
+    The maximum number of concurrent runspaces allocated to the scanning pool. Default is 64.
+
+.PARAMETER GUI
+    Launches the interactive web-based graphical user interface via a local HttpListener.
+
+.PARAMETER OutputFormat
+    Defines the output structure for CLI execution. Options:
+    - "Object" (Default): Returns PSCustomObjects to the pipeline.
+    - "GridView": Spawns an Out-GridView window displaying the results.
+    - "Json": Returns raw compressed JSON text to stdout.
+
+.PARAMETER Quiet
+    Suppresses console progress output during CLI execution.
+
+.EXAMPLE
+    .\CP-IPScanner.ps1 -Subnet "192.168.1.0/24" -GUI
+    Launches the web GUI pre-populated with the target subnet 192.168.1.0/24.
+
+.EXAMPLE
+    .\CP-IPScanner.ps1 -Range "10.0.10.1-100" -Ports 80,443,3389 -OutputFormat GridView
+    Scans the specified range on ports 80, 443, and 3389 via CLI and displays the results in Out-GridView.
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'CliStream')]
@@ -117,7 +161,8 @@ function Invoke-CoreScannerEngine {
 
     $MasterPortMap = @{
         20="FTP-Data"; 21="FTP"; 22="SSH"; 25="SMTP"; 53="DNS"; 80="HTTP"; 135="RPC"; 
-        161="SNMP"; 443="HTTPS"; 445="SMB"; 1433="MSSQL"; 3306="MySQL"; 3389="RDP"
+        161="SNMP"; 443="HTTPS"; 445="SMB"; 1433="MSSQL"; 3306="MySQL"; 3389="RDP";
+        4433="HTTPS-Alt"; 8000="HTTP-Alt"; 8080="HTTP-Proxy"; 8443="HTTPS-Alt"; 9443="HTTPS-Alt"
     }
 
     if (Test-Path $IanaCachePath) {
@@ -136,7 +181,7 @@ function Invoke-CoreScannerEngine {
         } catch {}
     }
     
-    $DefaultInfraPorts = @(20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389)
+    $DefaultInfraPorts = @(20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389, 4433, 8000, 8080, 8443, 9443)
     $PortsToScan = if ($Ports) { $Ports | Sort-Object -Unique } else { $DefaultInfraPorts | Sort-Object }
 
     $WorkerBlock = {
@@ -296,7 +341,7 @@ if ($RunGUI) {
         if ($Subnet) { $DefaultTarget = $Subnet -join ', ' }
         elseif ($Range) { $DefaultTarget = $Range -join ', ' }
 
-        $DefaultPortsText = if ($Ports) { $Ports -join ', ' } else { "21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389" }
+        $DefaultPortsText = if ($Ports) { $Ports -join ', ' } else { "20, 21, 22, 23, 25, 53, 80, 135, 161, 443, 445, 1433, 3306, 3389, 4433, 8000, 8080, 8443, 9443" }
         $TcpChecked = if ($TcpConnect) { "checked" } else { "" }
         $DbChecked = if ($UpdateDatabases) { "checked" } else { "" }
 
@@ -342,7 +387,7 @@ if ($RunGUI) {
 <head>
     <meta charset="UTF-8">
     <title>LITS Network Scanner</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50'><path fill='%230078d4' fill-rule='evenodd' d='M 25 0 A 24.999868 25.000025 0 0 0 0 25 A 24.999868 25.000025 0 0 0 25 50 A 24.999868 25.000025 0 0 0 50 25 A 24.999868 25.000025 0 0 0 25 0 z M 25 6.9960938 A 18.000229 18.000229 0 0 1 43 24.996094 A 18.000229 18.000229 0 0 1 25 42.996094 A 18.000229 18.000229 0 0 1 7 24.996094 A 18.000229 18.000229 0 0 1 25 6.9960938 z M 21.496094 12 A 0.5 0.5 0 0 0 20.996094 12.5 L 20.996094 25.701172 A 0.5 0.5 0 0 1 20.496094 26.201172 L 11.998047 26.201172 A 0.18766001 0.18766001 0 0 0 11.875 26.529297 L 24.623047 37.669922 A 0.57222682 0.57222682 0 0 0 25.376953 37.669922 L 38.123047 26.529297 A 0.18768046 0.18768046 0 0 0 38 26.201172 L 29.5 26.201172 A 0.5 0.5 0 0 1 29 25.701172 L 29 12.5 A 0.5 0.5 0 0 0 28.5 12 L 21.496094 12 z'/></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50'><path fill='%230078d4' fill-rule='evenodd' d='M 25 0 A 24.999868 25.000025 0 0 0 0 25 A 24.999868 25.000025 0 0 0 25 50 A 24.999868 25.000025 0 0 0 50 25 A 24.999868 25.000025 0 0 0 25 0 z M 25 6.9960938 A 18.000229 18.000229 0 0 1 43 24.996094 A 18.000229 18.000229 0 0 1 25 42.996094 A 18.000229 18.000229 0 0 1 7 24.996094 A 18.000229 18.000229 0 0 1 25 6.9960938 z M 21.496094 12 A 0.5 0.5 0 0 0 20.996094 12.5 L 20.996094 25.701172 A 0.5 0.5 0 0 1 20.496094 26.201172 L 11.998047 11.998047 26.201172 A 0.18766001 0.18766001 0 0 0 11.875 26.529297 L 24.623047 37.669922 A 0.57222682 0.57222682 0 0 0 25.376953 37.669922 L 38.123047 26.529297 A 0.18768046 0.18768046 0 0 0 38 26.201172 L 29.5 26.201172 A 0.5 0.5 0 0 1 29 25.701172 L 29 12.5 A 0.5 0.5 0 0 0 28.5 12 L 21.496094 12 z'/></svg>">
     <style>
         :root {
             --bg-main: #121214;
@@ -487,12 +532,36 @@ if ($RunGUI) {
             background-color: #202024; 
             color: #fff;
             font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover {
+            background-color: #2a2a30;
         }
         tr:nth-child(even) td { 
             background-color: var(--table-stripe); 
         }
         tr:hover td {
             background-color: #29292e;
+        }
+        td a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        td a:hover {
+            text-decoration: underline;
+        }
+        .copyable-link {
+            cursor: pointer;
+        }
+        .copyable-link:hover {
+            text-decoration: underline;
+        }
+        .copy-note {
+            font-size: 11px;
+            color: #4caf50;
+            margin-left: 4px;
+            font-weight: bold;
         }
         .offline-banner { 
             color: #fff; 
@@ -573,7 +642,9 @@ if ($RunGUI) {
     </div>
 
     <script>
-        let lastRes;
+        let lastRes = [];
+        let sortCol = 'IP';
+        let sortAsc = true;
         
         function setOfflineUI(message) {
             document.getElementById('controls-wrapper').classList.add('hidden');
@@ -593,6 +664,101 @@ if ($RunGUI) {
 
         setInterval(checkBackend, 100);
 
+        function ipToInt(ip) {
+            if (!ip) return 0;
+            const parts = ip.split('.').map(Number);
+            return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0;
+        }
+
+        function makeCopyable(text) {
+            if (!text) return '';
+            const safeText = ('' + text).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            return '<a class="copyable-link" onclick="copyToClipboard(\'' + safeText + '\', this)">' + text + '</a>';
+        }
+
+        function copyToClipboard(text, elem) {
+            navigator.clipboard.writeText(text).then(function() {
+                let existing = elem.querySelector('.copy-note');
+                if (!existing) {
+                    let note = document.createElement('span');
+                    note.className = 'copy-note';
+                    note.innerText = ' (Copied!)';
+                    elem.appendChild(note);
+                    setTimeout(function() {
+                        note.remove();
+                    }, 2000);
+                }
+            });
+        }
+
+        function formatPorts(portsStr, ip) {
+            if (!portsStr) return '';
+            const ports = portsStr.split(', ');
+            return ports.map(function(entry) {
+                const match = entry.match(/^(\d+)(?:\s*\((.*?)\))?$/);
+                if (!match) return makeCopyable(entry);
+                const portNum = parseInt(match[1], 10);
+                const serviceName = match[2] || '';
+
+                let proto = null;
+                if (portNum === 21) proto = 'ftp';
+                else if (portNum === 80 || portNum === 8000 || portNum === 8080) proto = 'http';
+                else if (portNum === 443 || portNum === 4433 || portNum === 8443 || portNum === 9443) proto = 'https';
+
+                if (proto) {
+                    const label = serviceName ? portNum + ' (' + serviceName + ')' : '' + portNum;
+                    return '<a href="' + proto + '://' + ip + ':' + portNum + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+                }
+                return makeCopyable(entry);
+            }).join(', ');
+        }
+
+        function sortData(col) {
+            if (sortCol === col) {
+                sortAsc = !sortAsc;
+            } else {
+                sortCol = col;
+                sortAsc = true;
+            }
+            renderTable();
+        }
+
+        function renderTable() {
+            if (!lastRes || lastRes.length === 0) return;
+
+            lastRes.sort((a, b) => {
+                let valA = a[sortCol] || '';
+                let valB = b[sortCol] || '';
+                let res = 0;
+
+                if (sortCol === 'IP') {
+                    res = ipToInt(valA) - ipToInt(valB);
+                } else {
+                    res = valA.toString().localeCompare(valB.toString(), undefined, {numeric: true, sensitivity: 'base'});
+                }
+                return sortAsc ? res : -res;
+            });
+
+            const getArrow = (col) => {
+                if (sortCol !== col) return '';
+                return sortAsc ? ' &#9650;' : ' &#9660;';
+            };
+
+            let html = '<div class="panel"><h2>Scan Mappings (' + lastRes.length + ' Active Elements)</h2><div class="table-responsive"><table><tr>';
+            html += '<th onclick="sortData(\'IP\')">IP Target' + getArrow('IP') + '</th>';
+            html += '<th onclick="sortData(\'Name\')">Dns Name/NetBIOS' + getArrow('Name') + '</th>';
+            html += '<th onclick="sortData(\'MAC\')">Hardware MAC' + getArrow('MAC') + '</th>';
+            html += '<th onclick="sortData(\'Vendor\')">NIC Vendor' + getArrow('Vendor') + '</th>';
+            html += '<th onclick="sortData(\'Ports\')">Active Ports' + getArrow('Ports') + '</th></tr>';
+
+            lastRes.forEach(i => {
+                const formattedPorts = formatPorts(i.Ports, i.IP);
+                html += '<tr><td>'+makeCopyable(i.IP || '')+'</td><td>'+makeCopyable(i.Name || '')+'</td><td>'+makeCopyable(i.MAC || '')+'</td><td>'+makeCopyable(i.Vendor || '')+'</td><td>'+formattedPorts+'</td></tr>';
+            });
+
+            document.getElementById('r').innerHTML = html + '</table></div><div class="action-bar"><button class="btn-secondary" onclick="exp()">Export CSV</button></div></div>';
+        }
+
         function s(){
             document.getElementById('r').innerHTML = '<div class="status-msg"><div class="spinner"></div>Scanning target infrastructure... please wait.</div>';
             fetch('/', {
@@ -610,11 +776,9 @@ if ($RunGUI) {
             })
             .then(data => {
                 lastRes = data;
-                let html = '<div class="panel"><h2>Scan Mappings (' + data.length + ' Active Elements)</h2><div class="table-responsive"><table><tr><th>IP Target</th><th>Dns Name/NetBIOS</th><th>Hardware MAC</th><th>NIC Vendor</th><th>Active Ports</th></tr>';
-                data.forEach(i => {
-                    html += '<tr><td>'+(i.IP || '')+'</td><td>'+(i.Name || '')+'</td><td>'+(i.MAC || '')+'</td><td>'+(i.Vendor || '')+'</td><td>'+(i.Ports || '')+'</td></tr>';
-                });
-                document.getElementById('r').innerHTML = html + '</table></div><div class="action-bar"><button class="btn-secondary" onclick="exp()">Export CSV</button></div></div>';
+                sortCol = 'IP';
+                sortAsc = true;
+                renderTable();
             })
             .catch(() => {
                 setOfflineUI('Scan execution failed. The backend server has dropped offline.');
