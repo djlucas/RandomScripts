@@ -2,7 +2,7 @@
 # AUTHOR: Lucas IT Services (LITS)
 # FILE: Invoke-IPScanner.ps1
 # DESCRIPTION: Multithreaded IP Scanner with GUI or CLI interface
-# Revision 4.5
+# Revision 4.6
 # ==============================================================================
 
 <#
@@ -104,25 +104,47 @@ $RunGUI = $GUI -or $AlwaysUseGUI
 # ==============================================================================
 # GLOBAL HELPER FUNCTIONS
 # ==============================================================================
-function Get-NetworkSubnet {
-    $Interface = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -eq "Up" } | Select-Object -First 1
-    if ($Interface) {
-        $ip = [ipaddress]$Interface.IPv4Address.IPAddress
-        $maskLength = $Interface.IPv4Address.PrefixLength
-        $bytes = $ip.GetAddressBytes()
-        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($bytes) }
-        $ipInt = [BitConverter]::ToUInt32($bytes, 0)
-        
-        $maskInt = if ($maskLength -eq 0) { 0 } else { [uint32]::MaxValue -shl (32 - $maskLength) }
-        $netInt = $ipInt -band $maskInt
-        
-        $netBytes = [BitConverter]::GetBytes($netInt)
-        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($netBytes) }
-        $netIp = ([ipaddress]$netBytes).IPAddressToString
-        
-        return "$netIp/$maskLength"
+function Get-AutoDetectedSubnets {
+    $DetectedSubnets = @()
+
+    $IpAddresses = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
+        $_.IPAddress -notlike "127.*" -and 
+        $_.IPAddress -notlike "169.254.*" -and 
+        $_.IPAddress -ne "0.0.0.0"
     }
-    return "192.168.1.0/24"
+
+    foreach ($Addr in $IpAddresses) {
+        $Interface = Get-NetAdapter -InterfaceIndex $Addr.InterfaceIndex -ErrorAction SilentlyContinue
+        if ($Interface -and $Interface.Status -eq "Up") {
+            $IpStr = $Addr.IPAddress
+            $Prefix = $Addr.PrefixLength
+            if (-not $Prefix) { $Prefix = 24 }
+
+            try {
+                [ipaddress]$ipAddrObj = $IpStr
+                $bytes = $ipAddrObj.GetAddressBytes()
+                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($bytes) }
+                $ipInt = [BitConverter]::ToUInt32($bytes, 0)
+
+                $maskInt = if ($Prefix -eq 0) { 0 } else { [uint32]::MaxValue -shl (32 - [int]$Prefix) }
+                $netInt = $ipInt -band $maskInt
+
+                $netBytes = [BitConverter]::GetBytes([uint32]$netInt)
+                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($netBytes) }
+                $netIp = ([ipaddress]$netBytes).IPAddressToString
+
+                $Cidr = "$netIp/$Prefix"
+                if ($DetectedSubnets -notcontains $Cidr) {
+                    $DetectedSubnets += $Cidr
+                }
+            } catch {}
+        }
+    }
+
+    if ($DetectedSubnets.Count -eq 0) {
+        return @("192.168.1.0/24")
+    }
+    return $DetectedSubnets
 }
 
 # ==============================================================================
@@ -390,7 +412,7 @@ if ($RunGUI) {
         $txtTarget.Text = $Range -join ", " 
     }
     else {
-        $txtTarget.Text = Get-NetworkSubnet
+        $txtTarget.Text = (Get-AutoDetectedSubnets) -join ", "
     }
     $form.Controls.Add($txtTarget)
 
@@ -634,8 +656,8 @@ if ($RunGUI) {
 } else {
     # --- Standard CLI Execution Pathway ---
     if (-not $Range -and -not $Subnet) {
-        $Subnet = @(Get-NetworkSubnet)
-        if (-not $Quiet) { Write-Host "Auto-detected Subnet: $Subnet" -ForegroundColor Cyan }
+        $Subnet = Get-AutoDetectedSubnets
+        if (-not $Quiet) { Write-Host "Auto-detected Subnets: $($Subnet -join ', ')" -ForegroundColor Cyan }
     }
 
     $CliParams = @{

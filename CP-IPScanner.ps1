@@ -2,7 +2,7 @@
 # AUTHOR: Lucas IT Services (LITS)
 # FILE: CP-IPScanner.ps1
 # DESCRIPTION: Multithreaded IP Scanner with GUI or CLI interface
-# Revision 1.7
+# Revision 2.0
 # ==============================================================================
 
 <#
@@ -97,6 +97,50 @@ Param(
 
 $AlwaysUseGUI = $True
 $RunGUI = $GUI -or $AlwaysUseGUI
+
+# Helper function to detect all active non-reserved network CIDRs across all interfaces
+function Get-AutoDetectedSubnets {
+    $DetectedSubnets = @()
+
+    $IpAddresses = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
+        $_.IPAddress -notlike "127.*" -and 
+        $_.IPAddress -notlike "169.254.*" -and 
+        $_.IPAddress -ne "0.0.0.0"
+    }
+
+    foreach ($Addr in $IpAddresses) {
+        $Interface = Get-NetAdapter -InterfaceIndex $Addr.InterfaceIndex -ErrorAction SilentlyContinue
+        if ($Interface -and $Interface.Status -eq "Up") {
+            $IpStr = $Addr.IPAddress
+            $Prefix = $Addr.PrefixLength
+            if (-not $Prefix) { $Prefix = 24 }
+
+            try {
+                [ipaddress]$ipAddrObj = $IpStr
+                $bytes = $ipAddrObj.GetAddressBytes()
+                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($bytes) }
+                $ipInt = [BitConverter]::ToUInt32($bytes, 0)
+
+                $maskInt = [uint32]::MaxValue -shl (32 - [int]$Prefix)
+                $netInt = $ipInt -band $maskInt
+
+                $netBytes = [BitConverter]::GetBytes([uint32]$netInt)
+                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($netBytes) }
+                $netIp = ([ipaddress]$netBytes).IPAddressToString
+
+                $Cidr = "$netIp/$Prefix"
+                if ($DetectedSubnets -notcontains $Cidr) {
+                    $DetectedSubnets += $Cidr
+                }
+            } catch {}
+        }
+    }
+
+    if ($DetectedSubnets.Count -eq 0) {
+        return @("192.168.1.0/24")
+    }
+    return $DetectedSubnets
+}
 
 # ==============================================================================
 # 1. CORE SCANNING ENGINE
@@ -335,8 +379,8 @@ if ($RunGUI) {
     try {
         $Listener.Start()
         
-        $InterfaceContext = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
-        $DefaultTarget = if ($InterfaceContext) { "$($InterfaceContext.IPv4Address.IPAddress)/24" } else { "192.168.1.0/24" }
+        $AutoSubnets = Get-AutoDetectedSubnets
+        $DefaultTarget = $AutoSubnets -join ', '
 
         if ($Subnet) { $DefaultTarget = $Subnet -join ', ' }
         elseif ($Range) { $DefaultTarget = $Range -join ', ' }
@@ -361,8 +405,8 @@ if ($RunGUI) {
             $ContextAsyncResult = $Listener.BeginGetContext($null, $null)
             
             while (-not $ContextAsyncResult.IsCompleted -and $Running -and $Listener.IsListening) {
-                if (([DateTime]::Now - $LastWatchdogTick).TotalMilliseconds -gt 1000) {
-                    Write-Host "Watchdog timeout crossed (1s limit exceeded). Terminating." -ForegroundColor Red
+                if (([DateTime]::Now - $LastWatchdogTick).TotalMilliseconds -gt 2000) {
+                    Write-Host "Watchdog timeout crossed (5s limit exceeded). Terminating." -ForegroundColor Red
                     $Running = $false
                     break
                 }
@@ -664,6 +708,12 @@ if ($RunGUI) {
 
         setInterval(checkBackend, 100);
 
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                checkBackend();
+            }
+        });
+
         function ipToInt(ip) {
             if (!ip) return 0;
             const parts = ip.split('.').map(Number);
@@ -846,14 +896,8 @@ if ($RunGUI) {
 } else {
     # --- Standard CLI Execution Pathway ---
     if (-not $Range -and -not $Subnet) {
-        $Interface = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -eq "Up" } | Select-Object -First 1
-        if ($Interface) {
-            $Subnet = @("$($Interface.IPv4Address.IPAddress)/24")
-            if (-not $Quiet) { Write-Host "Auto-detected Subnet: $Subnet" -ForegroundColor Cyan }
-        } else {
-            Write-Error "Could not auto-detect network. Please specify -Range or -Subnet."
-            return
-        }
+        $Subnet = Get-AutoDetectedSubnets
+        if (-not $Quiet) { Write-Host "Auto-detected Subnets: $($Subnet -join ', ')" -ForegroundColor Cyan }
     }
 
     $CliParams = @{
